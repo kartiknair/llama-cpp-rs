@@ -415,7 +415,7 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
     let mut nvcc = featless_cxx;
     nvcc.cuda(true)
         .flag("--forward-unknown-to-host-compiler")
-        .flag("-arch=all-major")
+        .flag("-arch=compute_80")
         .define("K_QUANTS_PER_ITERATION", Some("2"))
         .define("GGML_CUDA_PEER_MAX_BATCH_SIZE", Some("128"));
 
@@ -463,7 +463,16 @@ fn compile_cuda(cx: &mut Build, cxx: &mut Build, featless_cxx: Build) -> &'stati
     let template_instances = read_dir(cuda_path.join("template-instances"))
         .unwrap()
         .map(|f| f.unwrap())
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".cu"))
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("fattn-vec") {
+                name.ends_with("q4_0-q4_0.cu")
+                    || name.ends_with("q8_0-q8_0.cu")
+                    || name.ends_with("f16-f16.cu")
+            } else {
+                name.ends_with(".cu")
+            }
+        })
         .map(|entry| entry.path());
 
     nvcc.include(cuda_path.as_path())
