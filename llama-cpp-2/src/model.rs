@@ -110,6 +110,11 @@ impl LlamaModel {
         LlamaToken(token)
     }
 
+    /// Get whether this token is considered end of generation
+    pub fn token_is_eog(&self, token: LlamaToken) -> bool {
+        unsafe { llama_cpp_sys_2::llama_token_is_eog(self.model.as_ptr(), token.0) }
+    }
+
     /// Get the newline token.
     #[must_use]
     pub fn token_nl(&self) -> LlamaToken {
