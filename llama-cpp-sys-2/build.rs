@@ -297,6 +297,17 @@ fn main() {
 
     config.static_crt(static_crt);
 
+    if static_crt && matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc)) {
+        // Make every target CMake creates (C, C++, *and* CUDA) use /MT
+        // instead of the default /MD.
+        config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded");
+
+        // NVCC ignores the property above and still feeds /MD to cl.exe
+        // unless we pass the flag through -Xcompiler.
+        // One flag string is enough – CMake expands it for all configs.
+        config.define("CMAKE_CUDA_FLAGS", "-Xcompiler=/MT");
+    }
+
     if matches!(target_os, TargetOs::Android) {
         // build flags for android taken from this doc
         // https://github.com/ggerganov/llama.cpp/blob/master/docs/android.md
