@@ -185,9 +185,7 @@ fn main() {
         .map(|v| v == "1")
         .unwrap_or(build_shared_libs);
     let profile = env::var("LLAMA_LIB_PROFILE").unwrap_or("Release".to_string());
-    let static_crt = env::var("LLAMA_STATIC_CRT")
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    let static_crt = true;
 
     println!("cargo:rerun-if-env-changed=LLAMA_LIB_PROFILE");
     println!("cargo:rerun-if-env-changed=LLAMA_BUILD_SHARED_LIBS");
@@ -429,7 +427,7 @@ fn main() {
     }
 
     // Link libraries
-    let llama_libs_kind = if build_shared_libs { "dylib" } else { "static" };
+    let llama_libs_kind = "static";
     let llama_libs = extract_lib_names(&out_dir, build_shared_libs);
     assert_ne!(llama_libs.len(), 0);
 
