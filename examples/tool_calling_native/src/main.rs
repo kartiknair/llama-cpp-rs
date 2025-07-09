@@ -1,26 +1,18 @@
 use clap::Parser;
 use llama_cpp_2::{
     chat::{
-        chat_format_name, parse_chat_response, ChatMessage, ChatMessageDiff, ChatSyntax,
-        ChatTemplateInputs, ChatTemplates, ChatTool, ChatToolChoice, ReasoningFormat,
+        chat_format_name, parse_chat_response, ChatMessage, ChatSyntax, ChatTemplateInputs,
+        ChatTemplates, ChatTool, ChatToolChoice, ReasoningFormat,
     },
-    context::{params::LlamaContextParams, LlamaContext},
+    context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
     model::{params::LlamaModelParams, AddBos, LlamaModel, Special},
     sampling::LlamaSampler,
     token::LlamaToken,
-    token_type::LlamaTokenAttr,
 };
 use serde_json::json;
-use std::{
-    collections::HashSet,
-    io::Write,
-    num::NonZeroU32,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::{collections::HashSet, io::Write, num::NonZeroU32, path::PathBuf, time::Instant};
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -257,7 +249,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         preserved_token_ids.contains(&token)
     };
 
-    for step in 0..args.max_tokens {
+    for _step in 0..args.max_tokens {
         // Sample next token
         let new_token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(new_token);
