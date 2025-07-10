@@ -545,7 +545,10 @@ fn main() {
             println!("cargo:rustc-link-lib=cuda");
         }
 
-        println!("cargo:rustc-link-lib=static=culibos");
+        // Link against culibos except on Windows where the library does not exist.
+        if !matches!(target_os, TargetOs::Windows(_)) {
+            println!("cargo:rustc-link-lib=static=culibos");
+        }
     }
 
     // Link libraries
