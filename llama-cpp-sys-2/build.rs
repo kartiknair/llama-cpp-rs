@@ -243,6 +243,10 @@ fn main() {
         .allowlist_type("ggml_.*")
         .allowlist_function("llama_.*")
         .allowlist_type("llama_.*")
+        .allowlist_function("common_.*")
+        .allowlist_type("common_.*")
+        .allowlist_function("c_chat_.*")
+        .allowlist_type("c_chat_.*")
         .prepend_enum_name(false)
         .generate()
         .expect("Failed to generate bindings");
@@ -254,6 +258,8 @@ fn main() {
         .expect("Failed to write bindings");
 
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=chat_wrapper.h");
+    println!("cargo:rerun-if-changed=chat_wrapper.cpp");
 
     debug_log!("Bindings Created");
 
@@ -278,7 +284,11 @@ fn main() {
         config.define("GGML_BLAS", "OFF");
     }
 
-    if (matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc)) && matches!(profile.as_str(), "Release" | "RelWithDebInfo" | "MinSizeRel"))
+    if (matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc))
+        && matches!(
+            profile.as_str(),
+            "Release" | "RelWithDebInfo" | "MinSizeRel"
+        ))
     {
         // Debug Rust builds under MSVC turn off optimization even though we're ideally building the release profile of llama.cpp.
         // Looks like an upstream bug:
@@ -375,18 +385,135 @@ fn main() {
         .always_configure(false);
 
     let build_dir = config.build();
+
+    // In newer versions of llama.cpp, build-info.cpp is generated into the build tree automatically.
+    // Older versions generate it in the source tree – if that file exists, move it so that MSVC picks
+    // it up as part of the build.  Keep the original logic.
     let build_info_src = llama_src.join("common/build-info.cpp");
-    let build_info_target = build_dir.join("build-info.cpp");
-    std::fs::rename(&build_info_src,&build_info_target).unwrap_or_else(|move_e| {
-        // Rename may fail if the target directory is on a different filesystem/disk from the source.
-        // Fall back to copy + delete to achieve the same effect in this case.
-        std::fs::copy(&build_info_src, &build_info_target).unwrap_or_else(|copy_e| {
-            panic!("Failed to rename {build_info_src:?} to {build_info_target:?}. Move failed with {move_e:?} and copy failed with {copy_e:?}");
+    if build_info_src.exists() {
+        let build_info_target = build_dir.join("build-info.cpp");
+        std::fs::rename(&build_info_src, &build_info_target).unwrap_or_else(|move_e| {
+            std::fs::copy(&build_info_src, &build_info_target).unwrap_or_else(|copy_e| {
+                panic!("Failed to move build-info.cpp: {:?} / {:?}", move_e, copy_e);
+            });
+            std::fs::remove_file(&build_info_src).unwrap_or_else(|e| {
+                panic!("Failed to delete original build-info.cpp: {:?}", e);
+            });
         });
-        std::fs::remove_file(&build_info_src).unwrap_or_else(|e| {
-            panic!("Failed to delete {build_info_src:?} after copying to {build_info_target:?}: {e:?} (move failed because {move_e:?})");
-        });
-    });
+    }
+
+    // Windows MSVC fix: CMake's OBJECT library for build_info doesn't get properly
+    // merged into common.lib on Windows (unlike Linux/Mac). Rather than trying to
+    // locate loose .obj files or force /WHOLEARCHIVE, just provide the symbols directly.
+    if matches!(target_os, TargetOs::Windows(WindowsVariant::Msvc)) {
+        // Generate our own build-info.cpp from the template with real values
+        use std::fs;
+        
+        // Read the template file
+        let template_path = llama_src.join("common/build-info.cpp.in");
+        let template_content = fs::read_to_string(&template_path)
+            .expect("Failed to read build-info.cpp.in template");
+        
+        // Get real build information
+        let git_commit = Command::new("git")
+            .args(&["rev-parse", "HEAD"])
+            .current_dir(&llama_src)
+            .output()
+            .ok()
+            .and_then(|out| if out.status.success() { 
+                Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+            } else { None })
+            .unwrap_or_else(|| "unknown".to_string());
+            
+        // Get compiler info - use MSVC since we're in Windows MSVC path
+        let compiler_info = format!("MSVC {}", 
+            env::var("VSCMD_VER").unwrap_or_else(|_| "unknown".to_string()));
+            
+        // Build number - could be based on commit count or just 0
+        let build_number = Command::new("git")
+            .args(&["rev-list", "--count", "HEAD"])
+            .current_dir(&llama_src)
+            .output()
+            .ok()
+            .and_then(|out| if out.status.success() {
+                String::from_utf8_lossy(&out.stdout).trim().parse::<i32>().ok()
+            } else { None })
+            .unwrap_or(0);
+        
+        // Substitute template variables
+        let build_info_content = template_content
+            .replace("@LLAMA_BUILD_NUMBER@", &build_number.to_string())
+            .replace("@LLAMA_BUILD_COMMIT@", &git_commit)
+            .replace("@BUILD_COMPILER@", &compiler_info)
+            .replace("@BUILD_TARGET@", &target_triple);
+        
+        // Write processed file and compile
+        let build_info_cpp = out_dir.join("build-info.cpp");
+        fs::write(&build_info_cpp, build_info_content)
+            .expect("Failed to write build-info.cpp");
+        
+        debug_log!("Generated build-info.cpp with commit: {}, compiler: {}, target: {}", 
+                   git_commit, compiler_info, target_triple);
+        
+        cc::Build::new()
+            .cpp(true)
+            .file(&build_info_cpp)
+            .compile("build_info");
+    }
+
+    // Build our chat wrapper
+    let wrapper_src = Path::new(&manifest_dir).join("chat_wrapper.cpp");
+    let wrapper_obj = out_dir.join("chat_wrapper.o");
+
+    debug_log!(
+        "Building chat wrapper: {} -> {}",
+        wrapper_src.display(),
+        wrapper_obj.display()
+    );
+
+    // Compile our wrapper along with the chat.cpp file and dependencies
+    let mut wrapper_build = cc::Build::new();
+    wrapper_build
+        .cpp(true)
+        .file(&wrapper_src)
+        .file(&llama_src.join("common/chat.cpp"))
+        .file(&llama_src.join("common/chat-parser.cpp"))
+        .file(&llama_src.join("common/regex-partial.cpp"))
+        .file(&llama_src.join("common/json-partial.cpp"))
+        .file(&llama_src.join("common/common.cpp"))
+        .file(&llama_src.join("common/json-schema-to-grammar.cpp"))
+        .file(&llama_src.join("common/log.cpp"))
+        .include(&llama_src.join("include"))
+        .include(&llama_src.join("ggml/include"))
+        .include(&llama_src.join("common"))
+        .include(&llama_src.join("vendor"))
+        .include(&llama_src);
+
+    // Add nlohmann/json include path
+    if cfg!(target_os = "macos") {
+        wrapper_build.include("/opt/homebrew/include");
+    }
+
+    wrapper_build
+        .opt_level(if profile == "Debug" { 0 } else { 2 })
+        .static_flag(true);
+
+    // Add target-specific flags
+    match target_os {
+        TargetOs::Windows(WindowsVariant::Msvc) => {
+            wrapper_build.flag("/std:c++17");
+            if static_crt {
+                wrapper_build.static_crt(true);
+            }
+        }
+        _ => {
+            wrapper_build.flag("-std=c++17");
+        }
+    }
+
+    wrapper_build.compile("chat_wrapper");
+
+    debug_log!("Chat wrapper compiled successfully");
 
     // Search paths
     println!("cargo:rustc-link-search={}", out_dir.join("lib").display());
@@ -418,7 +545,10 @@ fn main() {
             println!("cargo:rustc-link-lib=cuda");
         }
 
-        println!("cargo:rustc-link-lib=static=culibos");
+        // Link against culibos except on Windows where the library does not exist.
+        if !matches!(target_os, TargetOs::Windows(_)) {
+            println!("cargo:rustc-link-lib=static=culibos");
+        }
     }
 
     // Link libraries

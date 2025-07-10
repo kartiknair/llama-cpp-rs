@@ -1,0 +1,21 @@
+[package]
+name = "tool_calling_native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = ["metal"]
+cuda = ["llama-cpp-2/cuda"]
+cuda-no-vmm = ["llama-cpp-2/cuda-no-vmm"]
+metal = ["llama-cpp-2/metal"]
+vulkan = ["llama-cpp-2/vulkan"]
+native = ["llama-cpp-2/native"]
+openmp = ["llama-cpp-2/openmp"]
+
+[dependencies]
+clap = { version = "4.5.4", features = ["derive"] }
+llama-cpp-2 = { path = "../../llama-cpp-2", default-features = false }
+serde_json = "1.0.117"
+uuid = { version = "1.8.0", features = ["v4"] }
+encoding_rs = "0.8" 

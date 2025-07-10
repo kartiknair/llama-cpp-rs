@@ -22,6 +22,7 @@ use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::string::FromUtf8Error;
 
+pub mod chat;
 pub mod context;
 pub mod llama_backend;
 pub mod llama_batch;

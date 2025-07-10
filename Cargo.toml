@@ -6,6 +6,7 @@ members = [
   "examples/embeddings",
   "examples/simple",
   "examples/reranker",
+  "examples/tool_calling_native",
 ]
 
 [workspace.dependencies]

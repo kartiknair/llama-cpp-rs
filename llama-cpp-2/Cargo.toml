@@ -14,9 +14,11 @@ llama-cpp-sys-2 = { path = "../llama-cpp-sys-2", version = "0.1.69" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-core = { workspace = true }
+libc = "0.2"
 
 [dev-dependencies]
 encoding_rs = { workspace = true }
+anyhow = "1.0.82"
 
 [features]
 default = ["openmp", "android-shared-stdcxx"]
