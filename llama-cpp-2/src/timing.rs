@@ -11,7 +11,7 @@ impl LlamaTimings {
     /// Create a new `LlamaTimings`.
     /// ```
     /// # use llama_cpp_2::timing::LlamaTimings;
-    /// let timings = LlamaTimings::new(1.0, 2.0, 3.0, 4.0, 5, 6);
+    /// let timings = LlamaTimings::new(1.0, 2.0, 3.0, 4.0, 5, 6, 0);
     /// let timings_str = "load time = 2.00 ms
     /// prompt eval time = 3.00 ms / 5 tokens (0.60 ms per token, 1666.67 tokens per second)
     /// eval time = 4.00 ms / 6 runs (0.67 ms per token, 1500.00 tokens per second)\n";
@@ -26,6 +26,7 @@ impl LlamaTimings {
         t_eval_ms: f64,
         n_p_eval: i32,
         n_eval: i32,
+        n_reused: i32,
     ) -> Self {
         Self {
             timings: llama_cpp_sys_2::llama_perf_context_data {
@@ -35,6 +36,7 @@ impl LlamaTimings {
                 t_eval_ms,
                 n_p_eval,
                 n_eval,
+                n_reused,
             },
         }
     }
@@ -75,6 +77,12 @@ impl LlamaTimings {
         self.timings.n_eval
     }
 
+    /// Get the number of times a ggml compute graph had been reused.
+    #[must_use]
+    pub fn n_reused(&self) -> i32 {
+        self.timings.n_reused
+    }
+
     /// Set the start time in milliseconds.
     pub fn set_t_start_ms(&mut self, t_start_ms: f64) {
         self.timings.t_start_ms = t_start_ms;
@@ -103,6 +111,11 @@ impl LlamaTimings {
     /// Set the number of evaluations.
     pub fn set_n_eval(&mut self, n_eval: i32) {
         self.timings.n_eval = n_eval;
+    }
+
+    /// Set the number of times a ggml compute graph had been reused.
+    pub fn set_n_reused(&mut self, n_reused: i32) {
+        self.timings.n_reused = n_reused;
     }
 }
 

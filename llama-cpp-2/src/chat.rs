@@ -27,16 +27,18 @@ impl From<ChatToolChoice> for c_chat_tool_choice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReasoningFormat {
     None,
-    DeepSeek,
+    Auto,
     DeepSeekLegacy,
+    DeepSeek,
 }
 
 impl From<ReasoningFormat> for c_reasoning_format {
     fn from(format: ReasoningFormat) -> Self {
         match format {
             ReasoningFormat::None => C_REASONING_FORMAT_NONE,
-            ReasoningFormat::DeepSeek => C_REASONING_FORMAT_DEEPSEEK,
+            ReasoningFormat::Auto => C_REASONING_FORMAT_AUTO,
             ReasoningFormat::DeepSeekLegacy => C_REASONING_FORMAT_DEEPSEEK_LEGACY,
+            ReasoningFormat::DeepSeek => C_REASONING_FORMAT_DEEPSEEK,
         }
     }
 }
@@ -77,6 +79,7 @@ pub enum ChatFormat {
     FunctionaryV31Llama31,
     Hermes2Pro,
     CommandR7B,
+    GptOss,
 }
 
 impl From<c_chat_format> for ChatFormat {
@@ -93,6 +96,7 @@ impl From<c_chat_format> for ChatFormat {
             C_CHAT_FORMAT_FUNCTIONARY_V3_1_LLAMA_3_1 => ChatFormat::FunctionaryV31Llama31,
             C_CHAT_FORMAT_HERMES_2_PRO => ChatFormat::Hermes2Pro,
             C_CHAT_FORMAT_COMMAND_R7B => ChatFormat::CommandR7B,
+            C_CHAT_FORMAT_GPT_OSS => ChatFormat::GptOss,
             _ => ChatFormat::ContentOnly,
         }
     }
@@ -712,6 +716,7 @@ pub fn parse_chat_response(
             ChatFormat::FunctionaryV31Llama31 => C_CHAT_FORMAT_FUNCTIONARY_V3_1_LLAMA_3_1,
             ChatFormat::Hermes2Pro => C_CHAT_FORMAT_HERMES_2_PRO,
             ChatFormat::CommandR7B => C_CHAT_FORMAT_COMMAND_R7B,
+            ChatFormat::GptOss => C_CHAT_FORMAT_GPT_OSS,
         },
         reasoning_format: syntax.reasoning_format.into(),
         reasoning_in_content: syntax.reasoning_in_content,
@@ -861,6 +866,7 @@ pub fn chat_format_name(format: ChatFormat) -> String {
         ChatFormat::FunctionaryV31Llama31 => C_CHAT_FORMAT_FUNCTIONARY_V3_1_LLAMA_3_1,
         ChatFormat::Hermes2Pro => C_CHAT_FORMAT_HERMES_2_PRO,
         ChatFormat::CommandR7B => C_CHAT_FORMAT_COMMAND_R7B,
+        ChatFormat::GptOss => C_CHAT_FORMAT_GPT_OSS,
     };
 
     let name_ptr = unsafe { c_chat_format_name(c_format) };

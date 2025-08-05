@@ -129,10 +129,12 @@ static common_reasoning_format cpp_reasoning_format_from_c(c_reasoning_format c_
     {
     case C_REASONING_FORMAT_NONE:
         return COMMON_REASONING_FORMAT_NONE;
-    case C_REASONING_FORMAT_DEEPSEEK:
-        return COMMON_REASONING_FORMAT_DEEPSEEK;
+    case C_REASONING_FORMAT_AUTO:
+        return COMMON_REASONING_FORMAT_AUTO;
     case C_REASONING_FORMAT_DEEPSEEK_LEGACY:
         return COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY;
+    case C_REASONING_FORMAT_DEEPSEEK:
+        return COMMON_REASONING_FORMAT_DEEPSEEK;
     default:
         return COMMON_REASONING_FORMAT_NONE;
     }

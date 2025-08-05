@@ -1271,6 +1271,7 @@ dependencies = [
  "clap",
  "encoding_rs",
  "llama-cpp-2",
+ "serde",
  "serde_json",
  "uuid",
 ]

@@ -11,15 +11,64 @@ use llama_cpp_2::{
     sampling::LlamaSampler,
     token::LlamaToken,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::HashSet, io::Write, num::NonZeroU32, path::PathBuf, time::Instant};
+use std::{collections::HashSet, fs, io::Write, num::NonZeroU32, path::PathBuf, time::Instant};
 use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelfileTool {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Modelfile {
+    #[serde(default)]
+    system: Option<String>,
+    #[serde(default)]
+    temperature: Option<f32>,
+    #[serde(default)]
+    top_p: Option<f32>,
+    #[serde(default)]
+    max_tokens: Option<u32>,
+    #[serde(default)]
+    tools: Vec<ModelfileTool>,
+    #[serde(default)]
+    reasoning_format: Option<String>,
+    #[serde(default)]
+    enable_thinking: Option<bool>,
+    #[serde(default)]
+    tool_choice: Option<String>,
+    #[serde(default)]
+    parallel_tool_calls: Option<bool>,
+}
+
+impl Default for Modelfile {
+    fn default() -> Self {
+        Self {
+            system: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            tools: vec![],
+            reasoning_format: None,
+            enable_thinking: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(about = "Tool calling example with native token classification")]
 struct Args {
     #[arg(short, long)]
     model: PathBuf,
+
+    #[arg(short = 'f', long, help = "Path to modelfile (JSON) with configuration")]
+    modelfile: Option<PathBuf>,
 
     #[arg(
         short,
@@ -50,12 +99,28 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
+    // Load modelfile if provided
+    let modelfile = if let Some(modelfile_path) = &args.modelfile {
+        let content = fs::read_to_string(modelfile_path)?;
+        serde_json::from_str::<Modelfile>(&content)?
+    } else {
+        Modelfile::default()
+    };
+
+    // Apply modelfile settings or use CLI args as defaults
+    let max_tokens = modelfile.max_tokens.unwrap_or(args.max_tokens);
+    let temperature = modelfile.temperature.unwrap_or(args.temperature);
+    let top_p = modelfile.top_p.unwrap_or(args.top_p);
+
     println!("🦙 Llama.cpp Tool Calling Example");
     println!("Model: {}", args.model.display());
+    if let Some(ref modelfile_path) = args.modelfile {
+        println!("Modelfile: {}", modelfile_path.display());
+    }
     println!("Prompt: {}", args.prompt);
-    println!("Max tokens: {}", args.max_tokens);
-    println!("Temperature: {}", args.temperature);
-    println!("Top-p: {}", args.top_p);
+    println!("Max tokens: {}", max_tokens);
+    println!("Temperature: {}", temperature);
+    println!("Top-p: {}", top_p);
     println!("Use CPU: {}", args.use_cpu);
     println!("Debug: {}", args.debug);
     if args.oai_stream {
@@ -88,50 +153,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     );
 
-    // Define tools
-    let tools = vec![
-        ChatTool {
-            name: "get_weather".to_string(),
-            description: "Get current weather for a location".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA"
+    // Define tools (use modelfile tools if provided, otherwise defaults)
+    let tools = if !modelfile.tools.is_empty() {
+        modelfile
+            .tools
+            .into_iter()
+            .map(|tool| ChatTool {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters.to_string(),
+            })
+            .collect()
+    } else {
+        vec![
+            ChatTool {
+                name: "get_weather".to_string(),
+                description: "Get current weather for a location".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA"
+                        },
+                        "unit": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "Temperature unit"
+                        }
                     },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "Temperature unit"
-                    }
-                },
-                "required": ["location"]
-            })
-            .to_string(),
-        },
-        ChatTool {
-            name: "calculate".to_string(),
-            description: "Perform mathematical calculations".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "Mathematical expression to evaluate"
-                    }
-                },
-                "required": ["expression"]
-            })
-            .to_string(),
-        },
-    ];
+                    "required": ["location"]
+                })
+                .to_string(),
+            },
+            ChatTool {
+                name: "calculate".to_string(),
+                description: "Perform mathematical calculations".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "expression": {
+                            "type": "string",
+                            "description": "Mathematical expression to evaluate"
+                        }
+                    },
+                    "required": ["expression"]
+                })
+                .to_string(),
+            },
+        ]
+    };
 
     // Create messages
+    let system_message = modelfile.system.unwrap_or_else(|| {
+        "You are a helpful assistant that can get weather information and perform calculations. Use the available tools when needed. You can reason through problems step by step if helpful.".to_string()
+    });
+
     let messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: "You are a helpful assistant that can get weather information and perform calculations. Use the available tools when needed.".to_string(),
+            content: system_message,
             content_parts: vec![],
             tool_calls: vec![],
             reasoning_content: None,
@@ -149,6 +230,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
+    // Parse modelfile settings
+    let reasoning_format = match modelfile.reasoning_format.as_deref() {
+        Some("none") => ReasoningFormat::None,
+        Some("auto") => ReasoningFormat::Auto,
+        Some("deepseek_legacy") => ReasoningFormat::DeepSeekLegacy,
+        Some("deepseek") => ReasoningFormat::DeepSeek,
+        _ => ReasoningFormat::Auto, // Default to auto
+    };
+
+    let tool_choice = match modelfile.tool_choice.as_deref() {
+        Some("auto") => ChatToolChoice::Auto,
+        Some("required") => ChatToolChoice::Required,
+        Some("none") => ChatToolChoice::None,
+        _ => ChatToolChoice::Auto, // Default to auto
+    };
+
     // Create template inputs
     let inputs = ChatTemplateInputs {
         messages,
@@ -157,10 +254,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         add_generation_prompt: true,
         use_jinja: true,
         tools,
-        tool_choice: ChatToolChoice::Auto,
-        parallel_tool_calls: false,
-        reasoning_format: ReasoningFormat::DeepSeek,
-        enable_thinking: true,
+        tool_choice,
+        parallel_tool_calls: modelfile.parallel_tool_calls.unwrap_or(false),
+        reasoning_format, // Use modelfile setting or auto-detect
+        enable_thinking: modelfile.enable_thinking.unwrap_or(true),
     };
 
     // Apply chat template
@@ -169,6 +266,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔧 Chat template applied successfully");
     println!("📋 Format: {}", chat_format_name(chat_params.format));
     println!("📏 Prompt length: {} characters", chat_params.prompt.len());
+    if args.debug {
+        println!("[DEBUG] Preserved tokens: {:?}", chat_params.preserved_tokens);
+        println!("[DEBUG] Additional stops: {:?}", chat_params.additional_stops);
+    }
     println!();
 
     // Initialize context
@@ -213,8 +314,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sampler = LlamaSampler::chain_simple(
         [
             Some(LlamaSampler::penalties(64, 1.1, 0.0, 0.0)),
-            Some(LlamaSampler::top_p(args.top_p, 1)),
-            Some(LlamaSampler::temp(args.temperature)),
+            Some(LlamaSampler::top_p(top_p, 1)),
+            Some(LlamaSampler::temp(temperature)),
             Some(LlamaSampler::dist(42)),
             Some(LlamaSampler::greedy()),
         ]
@@ -231,10 +332,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut is_first_chunk = true;
     let mut end_of_generation_token_reached = false;
 
-    // Create chat syntax for parsing (when needed)
+    // Create chat syntax for parsing (follows detected format from template)
     let chat_syntax = ChatSyntax {
         format: chat_params.format,
-        reasoning_format: ReasoningFormat::DeepSeek,
+        reasoning_format: ReasoningFormat::Auto, // Auto-detect reasoning format
         reasoning_in_content: false,
         thinking_forced_open: false,
         parse_tool_calls: true,
@@ -249,7 +350,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         preserved_token_ids.contains(&token)
     };
 
-    for _step in 0..args.max_tokens {
+    for _step in 0..max_tokens {
         // Sample next token
         let new_token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(new_token);

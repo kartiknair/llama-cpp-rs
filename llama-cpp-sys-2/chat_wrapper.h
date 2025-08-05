@@ -67,13 +67,15 @@ extern "C"
         C_CHAT_FORMAT_FUNCTIONARY_V3_1_LLAMA_3_1 = 8,
         C_CHAT_FORMAT_HERMES_2_PRO = 9,
         C_CHAT_FORMAT_COMMAND_R7B = 10,
+        C_CHAT_FORMAT_GPT_OSS = 11,
     } c_chat_format;
 
     typedef enum
     {
         C_REASONING_FORMAT_NONE = 0,
-        C_REASONING_FORMAT_DEEPSEEK = 1,
+        C_REASONING_FORMAT_AUTO = 1,
         C_REASONING_FORMAT_DEEPSEEK_LEGACY = 2,
+        C_REASONING_FORMAT_DEEPSEEK = 3,
     } c_reasoning_format;
 
     typedef struct

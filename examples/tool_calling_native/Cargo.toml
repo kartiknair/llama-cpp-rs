@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 clap = { version = "4.5.4", features = ["derive"] }
 llama-cpp-2 = { path = "../../llama-cpp-2", features = ["metal"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.117"
 uuid = { version = "1.8.0", features = ["v4"] }
 encoding_rs = "0.8" 
