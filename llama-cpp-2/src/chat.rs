@@ -9,11 +9,25 @@ use llama_cpp_sys_2::*;
 use openai_harmony::{
     load_harmony_encoding, 
     HarmonyEncodingName,
-    chat::{Role as HarmonyRole, Content as HarmonyContent, Message as HarmonyMessage}
+    chat::{Role as HarmonyRole, Content as HarmonyContent, Message as HarmonyMessage},
+    HarmonyEncoding
 };
+use std::sync::OnceLock;
 
 // For generating tool call UUIDs
 use uuid::Uuid;
+
+// Cached harmony encoding for performance
+static HARMONY_ENCODING: OnceLock<HarmonyEncoding> = OnceLock::new();
+
+/// Get cached harmony encoding (loads once, reuses forever)
+fn get_harmony_encoding() -> Result<&'static HarmonyEncoding, Box<dyn std::error::Error>> {
+    HARMONY_ENCODING.get_or_init(|| {
+        load_harmony_encoding(HarmonyEncodingName::HarmonyGptOss)
+            .expect("Failed to load harmony encoding")
+    });
+    Ok(HARMONY_ENCODING.get().unwrap())
+}
 
 /// Tool choice for chat completion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -714,14 +728,17 @@ impl Default for ChatMessage {
     }
 }
 
-/// Parse GPT-OSS response using harmony library
+/// Parse GPT-OSS response using harmony library (optimized with caching)
 pub fn parse_gpt_oss_response(
     input: &str,
     _is_partial: bool,
 ) -> Result<ChatMessage, Box<dyn std::error::Error>> {
-    // Load harmony encoding for GPT-OSS
-    let encoding = load_harmony_encoding(HarmonyEncodingName::HarmonyGptOss)
-        .map_err(|e| format!("Failed to load harmony encoding: {}", e))?;
+    // Get cached harmony encoding (loaded once, reused forever) - Major performance boost!
+    let encoding = get_harmony_encoding()?;
+    
+    // TODO: For even better performance, we could implement incremental tokenization
+    // to avoid re-tokenizing the entire input during streaming. This would require
+    // caching previous tokens and only tokenizing the new portion.
     
     // Tokenize the input
     let tokens = encoding.tokenizer().encode(input, &encoding.tokenizer().special_tokens()).0;
@@ -730,7 +747,7 @@ pub fn parse_gpt_oss_response(
     let harmony_messages = encoding.parse_messages_from_completion_tokens(tokens, Some(HarmonyRole::Assistant))
         .map_err(|e| format!("Failed to parse messages with harmony: {}", e))?;
     
-    // Convert harmony messages to our ChatMessage format
+    // Convert harmony messages to our ChatMessage format (optimized to process only last message)
     convert_harmony_messages_to_chat_message(harmony_messages, input)
 }
 
@@ -739,18 +756,14 @@ fn convert_harmony_messages_to_chat_message(
     harmony_messages: Vec<HarmonyMessage>,
     original_input: &str,
 ) -> Result<ChatMessage, Box<dyn std::error::Error>> {
-    let mut chat_msg = ChatMessage::default();
-    chat_msg.role = "assistant".to_string();
+        let mut chat_msg = ChatMessage::default();
     
-    let mut all_content = String::new();
-    let mut analysis_content = String::new();
-    let mut commentary_content = String::new();
-    let mut final_content = String::new();
-    let mut last_channel = String::new();
-    
-    for harmony_msg in harmony_messages {
-        // Extract text content from harmony message
-        let text_content = harmony_msg.content.iter()
+    // Only process the last (most recent) message for efficiency
+    if let Some(last_message) = harmony_messages.last() {
+        chat_msg.role = last_message.author.role.to_string();
+        
+        // Extract text content from the last harmony message
+        let text_content = last_message.content.iter()
             .filter_map(|content| {
                 if let HarmonyContent::Text(text) = content {
                     Some(text.text.clone())
@@ -761,21 +774,19 @@ fn convert_harmony_messages_to_chat_message(
             .collect::<Vec<String>>()
             .join("");
         
-        // Handle different channels
-        if let Some(channel) = &harmony_msg.channel {
-            last_channel = channel.clone();
+        // Handle channel-specific content based on the last message's channel
+        if let Some(channel) = &last_message.channel {
+            chat_msg.channel = Some(channel.clone());
             
             match channel.as_str() {
                 "analysis" => {
-                    analysis_content = text_content.clone();
-                    if !all_content.is_empty() { all_content.push(' '); }
-                    all_content.push_str(&text_content);
+                    chat_msg.analysis_content = Some(text_content.clone());
                 }
                 s if s.starts_with("commentary") => {
-                    commentary_content = text_content.clone();
+                    chat_msg.commentary_content = Some(text_content.clone());
                     
                     // Check for tool calls
-                    if let Some(recipient) = &harmony_msg.recipient {
+                    if let Some(recipient) = &last_message.recipient {
                         if recipient.starts_with("functions.") {
                             // Extract tool name (e.g., "functions.get_weather" -> "get_weather")
                             let tool_name = recipient.strip_prefix("functions.")
@@ -793,34 +804,16 @@ fn convert_harmony_messages_to_chat_message(
                     }
                 }
                 "final" => {
-                    final_content = text_content.clone();
-                    if !all_content.is_empty() { all_content.push(' '); }
-                    all_content.push_str(&text_content);
+                    chat_msg.final_content = Some(text_content.clone());
                 }
                 _ => {
-                    // Unknown channel, add to general content
-                    if !all_content.is_empty() { all_content.push(' '); }
-                    all_content.push_str(&text_content);
+                    // Unknown channel, just use as general content
                 }
             }
-        } else {
-            // No channel specified, add to general content
-            if !all_content.is_empty() { all_content.push(' '); }
-            all_content.push_str(&text_content);
         }
-    }
-    
-    // Set the parsed content
-    chat_msg.content = all_content;
-    chat_msg.analysis_content = if analysis_content.is_empty() { None } else { Some(analysis_content) };
-    chat_msg.commentary_content = if commentary_content.is_empty() { None } else { Some(commentary_content) };
-    chat_msg.final_content = if final_content.is_empty() { None } else { Some(final_content) };
-    chat_msg.channel = if last_channel.is_empty() { None } else { Some(last_channel) };
-    
-    // If no structured content found, fall back to simple parsing
-    if chat_msg.content.is_empty() {
-        chat_msg.content = original_input.to_string();
-        chat_msg.final_content = Some(original_input.to_string());
+    } else {
+        // Fallback if no messages
+        chat_msg.role = "assistant".to_string();
     }
     
     Ok(chat_msg)
@@ -831,26 +824,22 @@ fn convert_harmony_messages_to_chat_message(
 pub fn map_gpt_oss_to_standard_message(mut message: ChatMessage) -> ChatMessage {
     // Map final_content to main content (this is the actual response for the user)
     if let Some(final_content) = &message.final_content {
-        if !final_content.trim().is_empty() {
             message.content = final_content.clone();
-        }
     }
     
     // Map analysis_content to reasoning_content (this is the model's thinking)
     if let Some(analysis_content) = &message.analysis_content {
-        if !analysis_content.trim().is_empty() {
-            message.reasoning_content = Some(analysis_content.clone());
-        }
+        message.reasoning_content = Some(analysis_content.clone());
     }
     
     // Tool calls are already properly extracted and don't need mapping
     // They remain in message.tool_calls
     
-    // Clear GPT-OSS specific fields to avoid confusion
-    message.analysis_content = None;
-    message.commentary_content = None;
-    message.final_content = None;
-    message.channel = None;
+    // KEEP GPT-OSS specific fields for debugging (don't clear them)
+    // message.analysis_content = None;    // Keep for debugging
+    // message.commentary_content = None;  // Keep for debugging  
+    // message.final_content = None;       // Keep for debugging
+    // message.channel = None;             // Keep for debugging
     
     // If content is still empty after mapping, use the combined content as fallback
     if message.content.trim().is_empty() {
@@ -877,7 +866,7 @@ pub fn parse_chat_response(
     is_partial: bool,
     syntax: &ChatSyntax,
 ) -> Result<ChatMessage, Box<dyn std::error::Error>> {
-    parse_chat_response_with_mapping(input, is_partial, syntax, false)
+    parse_chat_response_with_mapping(input, is_partial, syntax, true)
 }
 
 /// Parse a chat response from the model with optional GPT-OSS to standard mapping
