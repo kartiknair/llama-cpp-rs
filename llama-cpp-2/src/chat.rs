@@ -5,6 +5,16 @@ use std::ptr;
 use crate::model::LlamaModel;
 use llama_cpp_sys_2::*;
 
+// Import harmony for GPT-OSS parsing
+use openai_harmony::{
+    load_harmony_encoding, 
+    HarmonyEncodingName,
+    chat::{Role as HarmonyRole, Content as HarmonyContent, Message as HarmonyMessage}
+};
+
+// For generating tool call UUIDs
+use uuid::Uuid;
+
 /// Tool choice for chat completion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatToolChoice {
@@ -135,6 +145,11 @@ pub struct ChatMessage {
     pub reasoning_content: Option<String>,
     pub tool_name: Option<String>,
     pub tool_call_id: Option<String>,
+    // GPT-OSS Harmony channel support
+    pub analysis_content: Option<String>,
+    pub commentary_content: Option<String>,
+    pub final_content: Option<String>,
+    pub channel: Option<String>,
 }
 
 /// A difference between two chat messages
@@ -691,8 +706,169 @@ impl Default for ChatMessage {
             reasoning_content: None,
             tool_name: None,
             tool_call_id: None,
+            analysis_content: None,
+            commentary_content: None,
+            final_content: None,
+            channel: None,
         }
     }
+}
+
+/// Parse GPT-OSS response using harmony library
+pub fn parse_gpt_oss_response(
+    input: &str,
+    _is_partial: bool,
+) -> Result<ChatMessage, Box<dyn std::error::Error>> {
+    // Load harmony encoding for GPT-OSS
+    let encoding = load_harmony_encoding(HarmonyEncodingName::HarmonyGptOss)
+        .map_err(|e| format!("Failed to load harmony encoding: {}", e))?;
+    
+    // Tokenize the input
+    let tokens = encoding.tokenizer().encode(input, &encoding.tokenizer().special_tokens()).0;
+    
+    // Parse messages using harmony
+    let harmony_messages = encoding.parse_messages_from_completion_tokens(tokens, Some(HarmonyRole::Assistant))
+        .map_err(|e| format!("Failed to parse messages with harmony: {}", e))?;
+    
+    // Convert harmony messages to our ChatMessage format
+    convert_harmony_messages_to_chat_message(harmony_messages, input)
+}
+
+/// Convert harmony messages to our ChatMessage format
+fn convert_harmony_messages_to_chat_message(
+    harmony_messages: Vec<HarmonyMessage>,
+    original_input: &str,
+) -> Result<ChatMessage, Box<dyn std::error::Error>> {
+    let mut chat_msg = ChatMessage::default();
+    chat_msg.role = "assistant".to_string();
+    
+    let mut all_content = String::new();
+    let mut analysis_content = String::new();
+    let mut commentary_content = String::new();
+    let mut final_content = String::new();
+    let mut last_channel = String::new();
+    
+    for harmony_msg in harmony_messages {
+        // Extract text content from harmony message
+        let text_content = harmony_msg.content.iter()
+            .filter_map(|content| {
+                if let HarmonyContent::Text(text) = content {
+                    Some(text.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("");
+        
+        // Handle different channels
+        if let Some(channel) = &harmony_msg.channel {
+            last_channel = channel.clone();
+            
+            match channel.as_str() {
+                "analysis" => {
+                    analysis_content = text_content.clone();
+                    if !all_content.is_empty() { all_content.push(' '); }
+                    all_content.push_str(&text_content);
+                }
+                s if s.starts_with("commentary") => {
+                    commentary_content = text_content.clone();
+                    
+                    // Check for tool calls
+                    if let Some(recipient) = &harmony_msg.recipient {
+                        if recipient.starts_with("functions.") {
+                            // Extract tool name (e.g., "functions.get_weather" -> "get_weather")
+                            let tool_name = recipient.strip_prefix("functions.")
+                                .unwrap_or(recipient)
+                                .to_string();
+                            
+                            // Create tool call
+                            let tool_call = ChatToolCall {
+                                name: tool_name,
+                                arguments: text_content.clone(),
+                                id: format!("call_{}", Uuid::new_v4()),
+                            };
+                            chat_msg.tool_calls.push(tool_call);
+                        }
+                    }
+                }
+                "final" => {
+                    final_content = text_content.clone();
+                    if !all_content.is_empty() { all_content.push(' '); }
+                    all_content.push_str(&text_content);
+                }
+                _ => {
+                    // Unknown channel, add to general content
+                    if !all_content.is_empty() { all_content.push(' '); }
+                    all_content.push_str(&text_content);
+                }
+            }
+        } else {
+            // No channel specified, add to general content
+            if !all_content.is_empty() { all_content.push(' '); }
+            all_content.push_str(&text_content);
+        }
+    }
+    
+    // Set the parsed content
+    chat_msg.content = all_content;
+    chat_msg.analysis_content = if analysis_content.is_empty() { None } else { Some(analysis_content) };
+    chat_msg.commentary_content = if commentary_content.is_empty() { None } else { Some(commentary_content) };
+    chat_msg.final_content = if final_content.is_empty() { None } else { Some(final_content) };
+    chat_msg.channel = if last_channel.is_empty() { None } else { Some(last_channel) };
+    
+    // If no structured content found, fall back to simple parsing
+    if chat_msg.content.is_empty() {
+        chat_msg.content = original_input.to_string();
+        chat_msg.final_content = Some(original_input.to_string());
+    }
+    
+    Ok(chat_msg)
+}
+
+/// Map GPT-OSS specific ChatMessage fields to standard ChatMessage format
+/// This converts channel-specific content to standard reasoning/content fields
+pub fn map_gpt_oss_to_standard_message(mut message: ChatMessage) -> ChatMessage {
+    // Map final_content to main content (this is the actual response for the user)
+    if let Some(final_content) = &message.final_content {
+        if !final_content.trim().is_empty() {
+            message.content = final_content.clone();
+        }
+    }
+    
+    // Map analysis_content to reasoning_content (this is the model's thinking)
+    if let Some(analysis_content) = &message.analysis_content {
+        if !analysis_content.trim().is_empty() {
+            message.reasoning_content = Some(analysis_content.clone());
+        }
+    }
+    
+    // Tool calls are already properly extracted and don't need mapping
+    // They remain in message.tool_calls
+    
+    // Clear GPT-OSS specific fields to avoid confusion
+    message.analysis_content = None;
+    message.commentary_content = None;
+    message.final_content = None;
+    message.channel = None;
+    
+    // If content is still empty after mapping, use the combined content as fallback
+    if message.content.trim().is_empty() {
+        // This should already be populated by the harmony parser as a combination
+        // of all channel contents, so we keep it as-is
+    }
+    
+    message
+}
+
+/// Parse GPT-OSS response and map to standard format in one step
+/// This is a convenience function that combines harmony parsing with field mapping
+pub fn parse_gpt_oss_to_standard_message(
+    input: &str,
+    is_partial: bool,
+) -> Result<ChatMessage, Box<dyn std::error::Error>> {
+    let gpt_oss_message = parse_gpt_oss_response(input, is_partial)?;
+    Ok(map_gpt_oss_to_standard_message(gpt_oss_message))
 }
 
 /// Parse a chat response from the model
@@ -701,6 +877,25 @@ pub fn parse_chat_response(
     is_partial: bool,
     syntax: &ChatSyntax,
 ) -> Result<ChatMessage, Box<dyn std::error::Error>> {
+    parse_chat_response_with_mapping(input, is_partial, syntax, false)
+}
+
+/// Parse a chat response from the model with optional GPT-OSS to standard mapping
+pub fn parse_chat_response_with_mapping(
+    input: &str,
+    is_partial: bool,
+    syntax: &ChatSyntax,
+    map_gpt_oss_to_standard: bool,
+) -> Result<ChatMessage, Box<dyn std::error::Error>> {
+    // Use harmony for GPT-OSS format parsing
+    if syntax.format == ChatFormat::GptOss {
+        let gpt_oss_message = parse_gpt_oss_response(input, is_partial)?;
+        return if map_gpt_oss_to_standard {
+            Ok(map_gpt_oss_to_standard_message(gpt_oss_message))
+        } else {
+            Ok(gpt_oss_message)
+        };
+    }
     let input_c = CString::new(input)?;
 
     let c_syntax = c_chat_syntax {
@@ -849,6 +1044,10 @@ pub fn parse_chat_response(
         reasoning_content,
         tool_name,
         tool_call_id,
+        analysis_content: None,
+        commentary_content: None,
+        final_content: None,
+        channel: None,
     })
 }
 

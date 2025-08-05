@@ -15,6 +15,10 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-core = { workspace = true }
 libc = "0.2"
+# OpenAI Harmony for proper GPT-OSS parsing
+openai-harmony = { path = "../harmony" }
+# For generating tool call UUIDs
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [dev-dependencies]
 encoding_rs = { workspace = true }

@@ -218,6 +218,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             reasoning_content: None,
             tool_name: None,
             tool_call_id: None,
+            analysis_content: None,
+            commentary_content: None,
+            final_content: None,
+            channel: None,
         },
         ChatMessage {
             role: "user".to_string(),
@@ -227,6 +231,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             reasoning_content: None,
             tool_name: None,
             tool_call_id: None,
+            analysis_content: None,
+            commentary_content: None,
+            final_content: None,
+            channel: None,
         },
     ];
 
@@ -509,20 +517,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Final structured parsing (following server.cpp approach)
         println!("\n🎯 Final Parse Results:");
         if let Ok(final_msg) = parse_chat_response(&generated_text, false, &chat_syntax) {
+            println!("📋 [ROLE] {}", final_msg.role);
+            
+            // Standard content
+            if !final_msg.content.is_empty() {
+                println!("💬 [CONTENT] {}", final_msg.content);
+            }
+            
+            // DeepSeek/standard reasoning content
             if let Some(reasoning) = &final_msg.reasoning_content {
                 if !reasoning.is_empty() {
                     println!("💭 [REASONING] {}", reasoning);
                 }
             }
-            if !final_msg.content.is_empty() {
-                println!("💬 [CONTENT] {}", final_msg.content);
+            
+            // GPT-OSS Harmony channels
+            if let Some(channel) = &final_msg.channel {
+                if !channel.is_empty() {
+                    println!("📡 [CHANNEL] {}", channel);
+                }
             }
-            for (i, tool_call) in final_msg.tool_calls.iter().enumerate() {
-                println!(
-                    "🔧 [TOOL CALL {}] Name: {}, Args: {}",
-                    i, tool_call.name, tool_call.arguments
-                );
+            
+            if let Some(analysis) = &final_msg.analysis_content {
+                if !analysis.is_empty() {
+                    println!("🔍 [ANALYSIS] {}", analysis);
+                }
             }
+            
+            if let Some(commentary) = &final_msg.commentary_content {
+                if !commentary.is_empty() {
+                    println!("📝 [COMMENTARY] {}", commentary);
+                }
+            }
+            
+            if let Some(final_content) = &final_msg.final_content {
+                if !final_content.is_empty() {
+                    println!("✨ [FINAL] {}", final_content);
+                }
+            }
+            
+            // Content parts
+            if !final_msg.content_parts.is_empty() {
+                println!("📄 [CONTENT PARTS]:");
+                for (i, part) in final_msg.content_parts.iter().enumerate() {
+                    println!("  {}. Type: {}, Text: {}", i + 1, part.content_type, part.text);
+                }
+            }
+            
+            // Tool calls
+            if !final_msg.tool_calls.is_empty() {
+                println!("🔧 [TOOL CALLS]:");
+                for (i, tool_call) in final_msg.tool_calls.iter().enumerate() {
+                    println!("  {}. Name: {}", i + 1, tool_call.name);
+                    println!("     ID: {}", tool_call.id);
+                    println!("     Args: {}", tool_call.arguments);
+                }
+            }
+            
+            // Tool metadata
+            if let Some(tool_name) = &final_msg.tool_name {
+                if !tool_name.is_empty() {
+                    println!("🛠️  [TOOL NAME] {}", tool_name);
+                }
+            }
+            
+            if let Some(tool_call_id) = &final_msg.tool_call_id {
+                if !tool_call_id.is_empty() {
+                    println!("🆔 [TOOL CALL ID] {}", tool_call_id);
+                }
+            }
+            
+            // Format information
+            println!("📋 [FORMAT] {}", chat_format_name(chat_params.format));
+            println!("🧠 [REASONING FORMAT] {:?}", chat_syntax.reasoning_format);
+            
+            // Raw generated text length for reference
+            println!("📏 [RAW TEXT LENGTH] {} characters", generated_text.len());
+            
+        } else {
+            println!("❌ Failed to parse final message");
+            println!("📝 [RAW OUTPUT] {}", generated_text);
         }
     }
 
