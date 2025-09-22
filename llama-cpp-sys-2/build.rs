@@ -343,6 +343,13 @@ fn main() {
         }
     }
 
+    // Enable RPC backend by default (can be disabled with LLAMA_RPC=0)
+    let rpc_enabled = env::var("LLAMA_RPC").map(|v| v != "0").unwrap_or(true);
+    if rpc_enabled {
+        config.define("GGML_RPC", "ON");
+        println!("cargo:rustc-cfg=feature=\"rpc\"");
+    }
+
     if cfg!(feature = "vulkan") {
         config.define("GGML_VULKAN", "ON");
         match target_os {

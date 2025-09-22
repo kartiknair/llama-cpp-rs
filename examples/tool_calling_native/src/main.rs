@@ -384,8 +384,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Accumulate generated text (following server.cpp approach)
         generated_text.push_str(&token_str);
 
-        if args.oai_stream {
-            if let Ok(new_message) = parse_chat_response(&generated_text, true, &chat_syntax) {
+        // Always try parsing like aios-kernel (not just for oai_stream)
+        if let Ok(new_message) = parse_chat_response(&generated_text, true, &chat_syntax) {
                 if is_first_chunk {
                     let chunk = json!({
                         "id": &completion_id,
@@ -458,10 +458,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 last_parsed_message = new_message;
             }
-        } else {
-            // Print token immediately for streaming effect
-            print!("{}", token_str);
-            std::io::stdout().flush().unwrap();
         }
 
         // Prepare for next iteration

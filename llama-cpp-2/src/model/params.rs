@@ -13,6 +13,8 @@ pub mod kv_overrides;
 pub struct LlamaModelParams {
     pub(crate) params: llama_cpp_sys_2::llama_model_params,
     kv_overrides: Vec<llama_cpp_sys_2::llama_model_kv_override>,
+    // keep tensor_split data alive if set
+    tensor_split: Option<Vec<f32>>,
 }
 
 impl Debug for LlamaModelParams {
@@ -24,6 +26,10 @@ impl Debug for LlamaModelParams {
             .field("use_mmap", &self.params.use_mmap)
             .field("use_mlock", &self.params.use_mlock)
             .field("kv_overrides", &"vec of kv_overrides")
+            .field(
+                "tensor_split_len",
+                &self.tensor_split.as_ref().map(|v| v.len()),
+            )
             .finish()
     }
 }
@@ -174,6 +180,35 @@ impl LlamaModelParams {
         self.params.use_mlock = use_mlock;
         self
     }
+
+    /// sets the tensor_split across devices. Values can be raw fractions; underlying
+    /// llama.cpp will normalize to cumulative distribution.
+    #[must_use]
+    pub fn with_tensor_split(mut self, splits: &[f32]) -> Self {
+        if splits.is_empty() {
+            self.params.tensor_split = std::ptr::null();
+            self.tensor_split = None;
+        } else {
+            self.tensor_split = Some(splits.to_vec());
+            // safe: vector is stored within self to keep pointer alive
+            let ptr = self.tensor_split.as_ref().unwrap().as_ptr();
+            self.params.tensor_split = ptr;
+        }
+        self
+    }
+
+    /// Sets how the model should be split across devices.
+    #[must_use]
+    pub fn with_split_mode(mut self, split_mode: llama_cpp_sys_2::llama_split_mode) -> Self {
+        self.params.split_mode = split_mode;
+        self
+    }
+
+    /// Convenience helper to enable layer-based sharding across devices (including RPC backends).
+    #[must_use]
+    pub fn with_split_mode_layer(self) -> Self {
+        self.with_split_mode(llama_cpp_sys_2::LLAMA_SPLIT_MODE_LAYER)
+    }
 }
 
 /// Default parameters for `LlamaModel`. (as defined in llama.cpp by `llama_model_default_params`)
@@ -202,6 +237,7 @@ impl Default for LlamaModelParams {
                     val_i64: 0,
                 },
             }],
+            tensor_split: None,
         }
     }
 }

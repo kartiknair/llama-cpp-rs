@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../../../../sandbox/test_inf"
+		},
+		{
+			"path": "../.."
+		}
+	],
+	"settings": {
+		"rust-analyzer.check.command": "clippy",
+		"typescript.tsdk": "node_modules/typescript/lib"
+	}
+}
